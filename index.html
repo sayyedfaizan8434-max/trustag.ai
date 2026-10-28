@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><title>TrustTag AI | Home</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0d9488">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+  
+  <div id="appInstallBanner" class="bg-teal text-white py-2 px-3 text-center d-flex justify-content-between align-items-center" style="background-color: #0d9488; display: none !important;">
+      <span class="small fw-bold"><i class="bi bi-phone me-1"></i> TrustTag AI App ko apne Phone me Download / Install karein!</span>
+      <button id="btnInstallApp" class="btn btn-sm btn-light fw-bold px-3 shadow-sm">📲 Install App</button>
+    </div>
+    <nav class="navbar navbar-expand-lg navbar-custom sticky-top">
+    <div class="container">
+      <a class="navbar-brand" href="/"><i class="bi bi-shield-check text-info"></i> TrustTag<span>AI</span></a>
+      <button class="navbar-toggler text-white" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu"><i class="bi bi-list"></i></button>
+      <div class="collapse navbar-collapse" id="navMenu">
+        <ul class="navbar-nav ms-auto align-items-center">
+          <li class="nav-item"><a class="nav-link active" href="/">Home</a></li>
+          <li class="nav-item"><a class="nav-link " href="/verify.html">Verify Product</a></li>
+          <li class="nav-item"><a class="nav-link " href="/report.html">Report Fake</a></li>
+          <li class="nav-item"><a class="nav-link " href="/about.html">About & FAQ</a></li>
+          <li class="nav-item ms-lg-3" id="authNavSlot"><a class="btn btn-sm btn-outline-teal text-white" href="/login.html">Login</a></li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero-section">
+    <div class="container">
+      <div class="row align-items-center g-5">
+        <div class="col-lg-7">
+          <span class="badge bg-info text-dark mb-2">Anti-Counterfeit Protection</span>
+          <h1 class="display-5 fw-bold mb-3">Verify Genuine Products. Stop Counterfeits.</h1>
+          <p class="lead opacity-90 mb-4">Protect yourself from duplicate and counterfeit products in local markets by checking barcodes and registry records.</p>
+          <div class="d-flex gap-3">
+            <a href="/verify.html" class="btn btn-teal btn-lg"><i class="bi bi-qr-code-scan me-2"></i>Verify Product</a>
+            <a href="/report.html" class="btn btn-outline-light btn-lg"><i class="bi bi-flag me-2"></i>Report Fake</a>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="card card-custom p-4 text-dark">
+            <h6 class="fw-bold text-uppercase text-muted">Quick Check Sandbox</h6>
+            <p class="small text-muted">Enter a sample product code to test right now:</p>
+            <div class="input-group mb-2">
+              <input type="text" id="heroProductId" class="form-control" value="PROD-MED-9941">
+              <button class="btn btn-teal" id="heroVerifyBtn">Check</button>
+            </div>
+            <div class="advisory-box mt-2">Try: <code>PROD-MED-9941</code> or <code>FAKE-SUSPECT-001</code></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+  <main class="py-5">
+    <div class="container">
+      <div class="text-center mb-5">
+        <h2 class="fw-bold">How TrustTag AI Works</h2>
+      </div>
+      <div class="row g-4 text-center mb-5">
+        <div class="col-md-4">
+          <div class="card card-custom p-4 h-100">
+            <div class="step-badge mb-3">1</div>
+            <h5 class="fw-bold">Scan or Enter Code</h5>
+            <p class="text-muted small">Scan product QR/Barcode with camera or enter the Product ID printed on the box.</p>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card card-custom p-4 h-100">
+            <div class="step-badge mb-3">2</div>
+            <h5 class="fw-bold">Registry Cross-Check</h5>
+            <p class="text-muted small">System matches authorized batch details, manufacturer, and active counterfeit flags.</p>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card card-custom p-4 h-100">
+            <div class="step-badge mb-3">3</div>
+            <h5 class="fw-bold">Community Safety</h5>
+            <p class="text-muted small">Approved community counterfeit reports alert future shoppers instantly.</p>
+          </div>
+        </div>
+      </div>
+      <h4 class="fw-bold mb-3">Recent Verified Incident Alerts</h4>
+      <div id="recentReportsContainer" class="row g-3"></div>
+    </div>
+  </main>
+  
+  <footer>
+    <div class="container text-center small text-light opacity-75">
+      &copy; 2026 TrustTag AI — Smart Product Authenticity System (College Capstone Project)
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>
