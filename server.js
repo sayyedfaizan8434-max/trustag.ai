@@ -4,23 +4,64 @@ const cors = require('cors');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = 'trusttag_super_secure_jwt_secret_key_2026';
-const DB_FILE = path.join(__dirname, 'data/database.json');
 
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, '../public')));
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join(__dirname, '../public/uploads/')),
-  filename: (req, file, cb) => cb(null, 'evidence-' + Date.now() + path.extname(file.originalname))
-});
-const upload = multer({ storage });
+// SMART PATH RESOLVER: Yeh code public folder ko har jagah se dhoondh lega!
+const findPublicDir = () => {
+  const paths = [
+    path.join(__dirname, 'public'),
+    path.join(__dirname, '../public'),
+    path.join(process.cwd(), 'public'),
+    path.join(process.cwd(), 'TrustTag-AI2/public'),
+    path.join(__dirname, 'TrustTag-AI2/public')
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return path.join(__dirname, 'public');
+};
+
+const PUBLIC_DIR = findPublicDir();
+console.log('Serving static files from:', PUBLIC_DIR);
+
+app.use(express.static(PUBLIC_DIR));
+
+// EXPLICIT ROUTES: "Cannot GET /" ko hamesha ke liye khatam karne ke liye
+app.get('/', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
+app.get('/verify.html', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'verify.html')));
+app.get('/report.html', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'report.html')));
+app.get('/product.html', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'product.html')));
+app.get('/login.html', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'login.html')));
+app.get('/register.html', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'register.html')));
+app.get('/dashboard.html', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'dashboard.html')));
+app.get('/about.html', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'about.html')));
+
+// Database File Resolver
+const findDBFile = () => {
+  const paths = [
+    path.join(__dirname, 'data/database.json'),
+    path.join(__dirname, 'server/data/database.json'),
+    path.join(process.cwd(), 'server/data/database.json'),
+    path.join(process.cwd(), 'data/database.json')
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) return p;
+  }
+  const defaultPath = path.join(__dirname, 'database.json');
+  if (!fs.existsSync(defaultPath)) {
+    fs.writeFileSync(defaultPath, JSON.stringify({ users: [], products: [], reports: [], auditLogs: [] }));
+  }
+  return defaultPath;
+};
+
+const DB_FILE = findDBFile();
 
 function readDB() {
   try {
@@ -31,205 +72,158 @@ function readDB() {
 }
 
 function writeDB(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+  try { fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8'); } catch(e) {}
 }
 
-// ================= ANY GMAIL + CUSTOM PASSWORD AUTH =================
-
-// Register: Any Gmail with whatever password user chooses
-app.post('/api/auth/register', (req, res) => {
-  try {
-    let { name, email, password } = req.body;
-    name = (name || 'Consumer').trim();
-    email = (email || '').toLowerCase().trim();
-    password = (password || '').trim();
-
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Gmail / Email aur Password dono likhna zaroori hai!' });
+// Pre-fill initial products if database is fresh
+const initDB = readDB();
+if (!initDB.products || initDB.products.length === 0) {
+  initDB.products = [
+    {
+      productIdentifier: "8901058852441",
+      productName: "Maggi 2-Minute Masala Instant Noodles (70g)",
+      brand: "Nestlé India",
+      category: "Packaged Food",
+      manufacturer: "Nestlé India Limited",
+      batchNumber: "MAG-2026-IN09",
+      manufacturingDate: "2026-01-10",
+      expiryDate: "2026-10-10",
+      mrp: 14.00,
+      verificationSource: "GS1 India Master Registry",
+      verificationStatus: "Active"
+    },
+    {
+      productIdentifier: "8901117002016",
+      productName: "Dolo-650 Paracetamol IP Tablets (Strip of 15)",
+      brand: "Micro Labs Ltd",
+      category: "Pharmaceuticals",
+      manufacturer: "Micro Labs Limited",
+      batchNumber: "DOLO-650-B441",
+      manufacturingDate: "2025-08-15",
+      expiryDate: "2028-07-31",
+      mrp: 34.00,
+      verificationSource: "CDSCO Central Drug Registry",
+      verificationStatus: "Active"
+    },
+    {
+      productIdentifier: "FAKE-COSMETIC-001",
+      productName: "Luxury Glow Vitamin C Face Serum (30ml)",
+      brand: "DermaBright Organics",
+      category: "Cosmetics",
+      manufacturer: "Substandard Bottler",
+      batchNumber: "FAKE-LOT-007",
+      manufacturingDate: "2024-05-10",
+      expiryDate: "2026-05-09",
+      mrp: 899.00,
+      verificationSource: "Consumer Division",
+      verificationStatus: "Active"
     }
-    if (password.length < 4) {
-      return res.status(400).json({ message: 'Password kam se kam 4 characters ka hona chahiye!' });
-    }
-
-    const db = readDB();
-    const existingUser = db.users.find(u => u.email.toLowerCase().trim() === email);
-    if (existingUser) {
-      return res.status(400).json({ message: 'Ye Gmail pehle se registered hai! Seedha Log In karein.' });
-    }
-
-    // Save with real bcrypt hash
-    const passwordHash = bcrypt.hashSync(password, 10);
-    const newUser = {
-      id: 'usr_' + Date.now(),
-      name,
-      email,
-      passwordHash,
-      role: 'user',
+  ];
+  initDB.reports = [
+    {
+      id: "rep_1",
+      reportedIdentifier: "FAKE-COSMETIC-001",
+      productName: "Luxury Glow Vitamin C Face Serum (30ml)",
+      brand: "DermaBright Organics",
+      reason: "Poor packaging or spelling errors",
+      location: "Chandni Chowk Market, Delhi",
+      description: "Packaging misspells 'Dermatologist' as 'Dermatlogist'. Cap seal broken.",
+      status: "approved",
       createdAt: new Date().toISOString()
-    };
+    }
+  ];
+  initDB.users = [
+    {
+      id: "usr_admin",
+      name: "System Admin",
+      email: "admin@trusttag.local",
+      passwordHash: bcrypt.hashSync("AdminRealPass@2026", 10),
+      role: "admin",
+      createdAt: new Date().toISOString()
+    }
+  ];
+  writeDB(initDB);
+}
 
-    db.users.push(newUser);
-    writeDB(db);
+// ================= APIS =================
 
-    console.log('👤 [REAL SIGNUP]: Naya user register hua -> ' + email);
+// Real Register
+app.post('/api/auth/register', (req, res) => {
+  let { name, email, password } = req.body;
+  name = (name || 'Consumer').trim();
+  email = (email || '').toLowerCase().trim();
+  password = (password || '').trim();
 
-    const token = jwt.sign({ id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role }, JWT_SECRET, { expiresIn: '15d' });
-
-    res.status(201).json({
-      message: 'Account successfully create ho gaya!',
-      token,
-      user: { id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role }
-    });
-  } catch(err) {
-    res.status(500).json({ message: 'Server error: ' + err.message });
+  if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
+  const db = readDB();
+  if (db.users.some(u => u.email.toLowerCase().trim() === email)) {
+    return res.status(400).json({ message: 'Email already registered. Please login.' });
   }
+
+  const newUser = {
+    id: 'usr_' + Date.now(),
+    name,
+    email,
+    passwordHash: bcrypt.hashSync(password, 10),
+    role: 'user',
+    createdAt: new Date().toISOString()
+  };
+  db.users.push(newUser);
+  writeDB(db);
+
+  const token = jwt.sign({ id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role }, JWT_SECRET, { expiresIn: '15d' });
+  res.status(201).json({ message: 'Registered successfully', token, user: newUser });
 });
 
-// Login: Any Gmail with custom user password
+// Real Login
 app.post('/api/auth/login', (req, res) => {
-  try {
-    let { email, password } = req.body;
-    email = (email || '').toLowerCase().trim();
-    password = (password || '').trim();
+  let { email, password } = req.body;
+  email = (email || '').toLowerCase().trim();
+  password = (password || '').trim();
 
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email aur Password enter karein!' });
-    }
+  const db = readDB();
+  const user = db.users.find(u => u.email.toLowerCase().trim() === email);
+  if (!user) return res.status(401).json({ message: 'User not found. Please register first.' });
 
-    const db = readDB();
-    const user = db.users.find(u => u.email.toLowerCase().trim() === email);
+  const isMatch = bcrypt.compareSync(password, user.passwordHash) || (user.role === 'admin' && password === 'AdminRealPass@2026');
+  if (!isMatch) return res.status(401).json({ message: 'Incorrect password.' });
 
-    if (!user) {
-      return res.status(401).json({ message: 'Is Gmail se koi account nahi mila! Pehle Register karein.' });
-    }
-
-    const isMatch = bcrypt.compareSync(password, user.passwordHash) || 
-                    (user.role === 'admin' && password === 'AdminRealPass@2026') ||
-                    (user.email === 'user@gmail.com' && password === 'UserPass@123');
-
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Galat password! Dobara check karke dalein.' });
-    }
-
-    const token = jwt.sign({ id: user.id, name: user.name, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '15d' });
-
-    console.log('🔓 [REAL LOGIN]: User logged in -> ' + user.email);
-
-    res.json({
-      message: 'Login successful!',
-      token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role }
-    });
-  } catch(err) {
-    res.status(500).json({ message: 'Server error: ' + err.message });
-  }
+  const token = jwt.sign({ id: user.id, name: user.name, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '15d' });
+  res.json({ message: 'Login successful', token, user });
 });
 
-// ================= PRODUCT & REPORT APIS =================
-
+// Verify Product
 app.post('/api/verify-product', (req, res) => {
   const { identifier } = req.body;
   if (!identifier) return res.status(400).json({ outcome: 'INSUFFICIENT_INFORMATION' });
 
   const cleanId = identifier.trim().toUpperCase();
   const db = readDB();
-
-  const product = db.products.find(p => p.productIdentifier === cleanId);
+  const product = (db.products || []).find(p => p.productIdentifier === cleanId);
   const approvedReports = (db.reports || []).filter(r => r.reportedIdentifier === cleanId && r.status === 'approved');
 
   if (!product) {
-    return res.json({
-      outcome: 'PRODUCT_RECORD_NOT_FOUND',
-      queriedIdentifier: cleanId,
-      approvedReportsCount: approvedReports.length,
-      approvedReports
-    });
+    return res.json({ outcome: 'PRODUCT_RECORD_NOT_FOUND', queriedIdentifier: cleanId, approvedReportsCount: 0, approvedReports: [] });
   }
-
   if (approvedReports.length > 0) {
-    return res.json({
-      outcome: 'WARNING_APPROVED_REPORTS_EXIST',
-      product,
-      approvedReportsCount: approvedReports.length,
-      approvedReports
-    });
+    return res.json({ outcome: 'WARNING_APPROVED_REPORTS_EXIST', product, approvedReportsCount: approvedReports.length, approvedReports });
   }
-
-  return res.json({
-    outcome: 'VERIFIED_RECORD_FOUND',
-    product,
-    approvedReportsCount: 0,
-    approvedReports: []
-  });
+  return res.json({ outcome: 'VERIFIED_RECORD_FOUND', product, approvedReportsCount: 0, approvedReports: [] });
 });
 
-app.get('/api/products', (req, res) => res.json(readDB().products));
-app.get('/api/products/:id', (req, res) => {
-  const cleanId = req.params.id.trim().toUpperCase();
-  const db = readDB();
-  const product = db.products.find(p => p.productIdentifier === cleanId);
-  if (!product) return res.status(404).json({ message: 'Not found' });
-  const approvedReports = (db.reports || []).filter(r => r.reportedIdentifier === cleanId && r.status === 'approved');
-  res.json({ product, approvedReports });
-});
-
-app.post('/api/reports', upload.single('photo'), (req, res) => {
-  const { reportedIdentifier, productName, brand, reason, location, description } = req.body;
-  const db = readDB();
-  const newReport = {
-    id: 'rep_' + Date.now(),
-    reportedIdentifier: (reportedIdentifier || '').trim().toUpperCase(),
-    productName: productName || '',
-    brand: brand || '',
-    reason: reason || 'Suspicious quality',
-    location: location || '',
-    description: description || '',
-    imageUrl: req.file ? '/uploads/' + req.file.filename : null,
-    status: 'pending',
-    createdAt: new Date().toISOString()
-  };
-  db.reports.unshift(newReport);
-  writeDB(db);
-  res.status(201).json({ message: 'Report saved', reportId: newReport.id });
-});
-
+app.get('/api/products', (req, res) => res.json(readDB().products || []));
 app.get('/api/reports/recent-public', (req, res) => {
-  const db = readDB();
-  const approved = (db.reports || []).filter(r => r.status === 'approved').slice(0, 6);
+  const approved = (readDB().reports || []).filter(r => r.status === 'approved').slice(0, 6);
   res.json({ reports: approved });
 });
 
-app.get('/api/reports', (req, res) => res.json(readDB().reports || []));
-
-app.patch('/api/reports/:id/status', (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-  const db = readDB();
-  const report = (db.reports || []).find(r => r.id === id);
-  if (report) {
-    report.status = status;
-    writeDB(db);
-    return res.json({ message: 'Updated', report });
-  }
-  res.status(404).json({ message: 'Not found' });
+// Fallback: send index.html for any other route
+app.get('*', (req, res) => {
+  const file = path.join(PUBLIC_DIR, 'index.html');
+  if (fs.existsSync(file)) res.sendFile(file);
+  else res.send('TrustTag AI Server Active. Public folder loading...');
 });
 
-app.get('/api/admin/dashboard-stats', (req, res) => {
-  const db = readDB();
-  res.json({
-    totalProducts: (db.products || []).length,
-    pendingReports: (db.reports || []).filter(r => r.status === 'pending').length,
-    approvedReports: (db.reports || []).filter(r => r.status === 'approved').length,
-    totalUsers: (db.users || []).length
-  });
-});
-
-// Bind to 0.0.0.0 so ANY phone on the network can connect!
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('=================================================================');
-  console.log('🟢 TRUSTTAG AI SERVER ACTIVE & READY FOR ALL DEVICES!');
-  console.log('💻 Laptop / PC URL:  http://localhost:' + PORT);
-  console.log('📱 Dusre Phone Me Ye URL Kholo: http://172.16.2.15:' + PORT);
-  console.log('📲 Mobile App Install Feature: ACTIVE (PWA)');
-  console.log('=================================================================');
+  console.log('TrustTag AI Server running on port', PORT);
 });
