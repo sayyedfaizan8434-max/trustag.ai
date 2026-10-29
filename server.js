@@ -10,6 +10,28 @@ const JWT_SECRET = 'trusttag_secret_2026';
 app.use(cors());
 app.use(express.json());
 
+// PWA Manifest for Mobile Installation
+app.get('/manifest.json', (req, res) => {
+  res.json({
+    name: "TrustTag AI - Product Authenticity",
+    short_name: "TrustTag AI",
+    start_url: "/",
+    display: "standalone",
+    background_color: "#0b1329",
+    theme_color: "#0ea5e9",
+    icons: [
+      { src: "https://cdn-icons-png.flaticon.com/512/9422/9422891.png", sizes: "192x192", type: "image/png" },
+      { src: "https://cdn-icons-png.flaticon.com/512/9422/9422891.png", sizes: "512x512", type: "image/png" }
+    ]
+  });
+});
+
+// PWA Service Worker
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send("self.addEventListener('install', e => self.skipWaiting()); self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));");
+});
+
 let db = {
   users: [{ id: "admin", name: "Admin", email: "admin@trusttag.local", passwordHash: bcrypt.hashSync("AdminRealPass@2026", 10), role: "admin" }],
   products: [
@@ -70,6 +92,10 @@ app.get('*', (req, res) => {
 <head>
   <meta charset="UTF-8"><title>TrustTag AI - Product Authenticity Verification</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0ea5e9">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <script src="https://unpkg.com/html5-qrcode"></script>
@@ -79,10 +105,13 @@ app.get('*', (req, res) => {
   </style>
 </head>
 <body>
-  <nav class="navbar navbar-dark bg-black py-3 border-bottom border-secondary mb-4">
+  <nav class="navbar navbar-dark bg-black py-3 border-bottom border-secondary mb-3">
     <div class="container d-flex justify-content-between align-items-center">
       <a class="navbar-brand fw-bold text-info fs-4" href="/"><i class="bi bi-shield-check me-2"></i>TrustTag AI</a>
-      <div id="uBadge"></div>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-warning text-dark fw-bold btn-sm shadow-sm" onclick="downloadAppPrompt()"><i class="bi bi-download me-1"></i> 📲 Download App</button>
+        <div id="uBadge"></div>
+      </div>
     </div>
   </nav>
 
@@ -97,7 +126,7 @@ app.get('*', (req, res) => {
     <div id="sec-verify" class="row justify-content-center">
       <div class="col-lg-7">
         <div class="card card-dark p-4 shadow mb-4">
-          <h4 class="fw-bold mb-3 text-center">Verify Product Authenticity</h4>
+          <h4 class="fw-bold mb-3 text-center text-white">Verify Product Authenticity</h4>
           <div class="input-group mb-3">
             <input type="text" id="barcodeIn" class="form-control form-control-lg bg-dark text-white border-secondary" placeholder="e.g. 8901058852441">
             <button class="btn btn-info fw-bold text-dark px-4" onclick="doVerify()"><i class="bi bi-search me-1"></i> Check</button>
@@ -150,7 +179,7 @@ app.get('*', (req, res) => {
     <div id="sec-auth" class="row justify-content-center d-none">
       <div class="col-md-5">
         <div class="card card-dark p-4 shadow">
-          <h4 class="fw-bold text-center mb-3" id="authTitle">Sign In</h4>
+          <h4 class="fw-bold text-center mb-3 text-white" id="authTitle">Sign In</h4>
           <div id="authAlert" class="alert d-none"></div>
           <div class="mb-3 d-none" id="nameBox">
             <label class="form-label">Full Name</label>
@@ -173,8 +202,47 @@ app.get('*', (req, res) => {
     </div>
   </div>
 
+  <!-- Download Modal -->
+  <div class="modal fade" id="installModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content bg-dark text-white border-info">
+        <div class="modal-header border-secondary">
+          <h5 class="modal-title fw-bold text-info"><i class="bi bi-phone me-2"></i>Install TrustTag AI App</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body small">
+          <h6 class="fw-bold text-warning">📱 Android Phone (Chrome):</h6>
+          <p>Chrome ke upar <strong>3 dots (⋮)</strong> par click karein aur <strong>"Install app"</strong> ya <strong>"Add to Home screen"</strong> select karein. Phone me app install ho jayegi!</p>
+          <hr class="border-secondary">
+          <h6 class="fw-bold text-info">🍏 iPhone (Safari):</h6>
+          <p>Niche center me <strong>Share icon (↑)</strong> par tap karein aur <strong>"Add to Home Screen"</strong> par click karein.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    let scanner = null, isReg = false;
+    let deferredPrompt, scanner = null, isReg = false;
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+    });
+
+    function downloadAppPrompt() {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt = null;
+      } else {
+        new bootstrap.Modal(document.getElementById('installModal')).show();
+      }
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+
     function showSec(s) {
       ['verify', 'report', 'auth'].forEach(k => document.getElementById('sec-' + k).classList.add('d-none'));
       document.getElementById('sec-' + s).classList.remove('d-none');
@@ -215,11 +283,11 @@ app.get('*', (req, res) => {
       const res = await fetch('/api/verify-product', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: id }) });
       const d = await res.json();
       if (d.outcome === 'VERIFIED') {
-        out.innerHTML = '<div class="card card-dark p-4 border-success"><div class="d-flex justify-content-between mb-2"><span class="badge bg-success">AUTHENTIC RECORD FOUND</span><code>' + d.product.productIdentifier + '</code></div><h3 class="fw-bold">' + d.product.productName + '</h3><p class="text-secondary">Brand: <strong>' + d.product.brand + '</strong> | Batch: ' + d.product.batchNumber + ' | MRP: ₹' + d.product.mrp + '</p><small class="text-info"><i class="bi bi-database me-1"></i> Source: ' + d.product.source + '</small></div>';
+        out.innerHTML = '<div class="card card-dark p-4 border-success"><div class="d-flex justify-content-between mb-2"><span class="badge bg-success">AUTHENTIC RECORD FOUND</span><code>' + d.product.productIdentifier + '</code></div><h3 class="fw-bold text-white">' + d.product.productName + '</h3><p class="text-secondary">Brand: <strong>' + d.product.brand + '</strong> | Batch: ' + d.product.batchNumber + ' | MRP: ₹' + d.product.mrp + '</p><small class="text-info"><i class="bi bi-database me-1"></i> Source: ' + d.product.source + '</small></div>';
       } else if (d.outcome === 'WARNING') {
-        out.innerHTML = '<div class="card card-dark p-4 border-warning"><span class="badge bg-warning text-dark mb-2">WARNING: SUSPICIOUS REPORT REGISTERED</span><h3 class="fw-bold">' + d.product.productName + '</h3><div class="alert alert-warning small my-2"><strong>Incident:</strong> ' + d.reports.map(r => r.reason + ' - ' + r.description).join('<br>') + '</div></div>';
+        out.innerHTML = '<div class="card card-dark p-4 border-warning"><span class="badge bg-warning text-dark mb-2">WARNING: SUSPICIOUS REPORT REGISTERED</span><h3 class="fw-bold text-white">' + d.product.productName + '</h3><div class="alert alert-warning small my-2"><strong>Incident:</strong> ' + d.reports.map(r => r.reason + ' - ' + r.description).join('<br>') + '</div></div>';
       } else {
-        out.innerHTML = '<div class="card card-dark p-4 border-danger"><span class="badge bg-danger mb-2">RECORD NOT FOUND</span><h5 class="fw-bold">No match found in authorized database</h5><p class="text-secondary small">This product ID was not found in registered databases.</p></div>';
+        out.innerHTML = '<div class="card card-dark p-4 border-danger"><span class="badge bg-danger mb-2">RECORD NOT FOUND</span><h5 class="fw-bold text-white">No match found in authorized database</h5><p class="text-secondary small">This product ID was not found in registered databases.</p></div>';
       }
     }
     function startCam() {
