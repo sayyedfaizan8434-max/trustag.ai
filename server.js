@@ -1,14 +1,48 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 const JWT_SECRET = 'trusttag_secret_2026';
+const DB_FILE = path.join(__dirname, 'database.json');
 
 app.use(cors());
 app.use(express.json());
+
+const defaultDB = {
+  users: [
+    { id: "admin", name: "Admin", email: "admin@trusttag.local", passwordHash: bcrypt.hashSync("AdminRealPass@2026", 10), role: "admin" },
+    { id: "usr_faizuu", name: "Faizuu", email: "faizuu@gmail.com", passwordHash: bcrypt.hashSync("Faizuu@123", 10), role: "user" }
+  ],
+  products: [
+    { productIdentifier: "8901058852441", productName: "Maggi 2-Minute Masala Instant Noodles (70g)", brand: "Nestle India", batchNumber: "MAG-2026-IN09", mrp: 14.00, source: "GS1 India Master Registry" },
+    { productIdentifier: "8901117002016", productName: "Dolo-650 Paracetamol IP Tablets (15 Tab)", brand: "Micro Labs Ltd", batchNumber: "DOLO-650-B441", mrp: 34.00, source: "CDSCO Central Drug Registry" },
+    { productIdentifier: "FAKE-COSMETIC-001", productName: "Luxury Glow Vitamin C Serum (30ml)", brand: "DermaBright Organics", batchNumber: "FAKE-LOT-007", mrp: 899.00, source: "Consumer Division" }
+  ],
+  reports: [
+    { id: "rep_1", reportedIdentifier: "FAKE-COSMETIC-001", reason: "Poor packaging or spelling errors", description: "Misspells Dermatologist as Dermatlogist. Cap seal broken." }
+  ]
+};
+
+function getDB() {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    }
+  } catch(e) {}
+  saveDB(defaultDB);
+  return defaultDB;
+}
+
+function saveDB(data) {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch(e) {}
+}
 
 // PWA Manifest
 app.get('/manifest.json', (req, res) => {
@@ -31,48 +65,80 @@ app.get('/sw.js', (req, res) => {
   res.send("self.addEventListener('install', e => self.skipWaiting()); self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));");
 });
 
-let db = {
-  users: [{ id: "admin", name: "Admin", email: "admin@trusttag.local", passwordHash: bcrypt.hashSync("AdminRealPass@2026", 10), role: "admin" }],
-  products: [
-    { productIdentifier: "8901058852441", productName: "Maggi 2-Minute Masala Instant Noodles (70g)", brand: "Nestle India", batchNumber: "MAG-2026-IN09", mrp: 14.00, source: "GS1 India Master Registry" },
-    { productIdentifier: "8901117002016", productName: "Dolo-650 Paracetamol IP Tablets (15 Tab)", brand: "Micro Labs Ltd", batchNumber: "DOLO-650-B441", mrp: 34.00, source: "CDSCO Central Drug Registry" },
-    { productIdentifier: "FAKE-COSMETIC-001", productName: "Luxury Glow Vitamin C Serum (30ml)", brand: "DermaBright Organics", batchNumber: "FAKE-LOT-007", mrp: 899.00, source: "Consumer Division" }
-  ],
-  reports: [
-    { id: "rep_1", reportedIdentifier: "FAKE-COSMETIC-001", reason: "Poor packaging or spelling errors", description: "Misspells Dermatologist as Dermatlogist. Cap seal broken." }
-  ]
-};
-
+// Register: Saves permanently to database.json
 app.post('/api/auth/register', (req, res) => {
   let { name, email, password } = req.body;
   email = (email || '').toLowerCase().trim();
   password = (password || '').trim();
   name = (name || 'Consumer').trim();
+
   if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
-  if (db.users.some(u => u.email === email)) return res.status(400).json({ message: 'Email already registered' });
-  const newUser = { id: 'usr_' + Date.now(), name, email, passwordHash: bcrypt.hashSync(password, 10), role: 'user' };
+
+  const db = getDB();
+  const cleanEmail = email.toLowerCase().trim();
+  const cleanName = name.toLowerCase().trim();
+
+  if (db.users.some(u => u.email.toLowerCase().trim() === cleanEmail || u.name.toLowerCase().trim() === cleanName)) {
+    return res.status(400).json({ message: 'Ye account pehle se bana hua hai! Seedha Log In karein.' });
+  }
+
+  const newUser = {
+    id: 'usr_' + Date.now(),
+    name,
+    email: cleanEmail,
+    passwordHash: bcrypt.hashSync(password, 10),
+    role: 'user',
+    createdAt: new Date().toISOString()
+  };
+
   db.users.push(newUser);
-  const token = jwt.sign({ id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role }, JWT_SECRET, { expiresIn: '15d' });
+  saveDB(db);
+
+  const token = jwt.sign({ id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role }, JWT_SECRET, { expiresIn: '30d' });
   res.status(201).json({ message: 'Registration successful', token, user: newUser });
 });
 
+// Login: Searches by Email OR Username!
 app.post('/api/auth/login', (req, res) => {
   let { email, password } = req.body;
-  email = (email || '').toLowerCase().trim();
+  const identifier = (email || '').toLowerCase().trim();
   password = (password || '').trim();
-  const user = db.users.find(u => u.email === email);
-  if (!user) return res.status(401).json({ message: 'User not found. Please register first.' });
-  const isMatch = bcrypt.compareSync(password, user.passwordHash) || (user.role === 'admin' && password === 'AdminRealPass@2026');
-  if (!isMatch) return res.status(401).json({ message: 'Incorrect password.' });
-  const token = jwt.sign({ id: user.id, name: user.name, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '15d' });
+
+  if (!identifier || !password) {
+    return res.status(400).json({ message: 'Email/Username aur Password enter karein.' });
+  }
+
+  const db = getDB();
+  const user = db.users.find(u => 
+    u.email.toLowerCase().trim() === identifier || 
+    u.name.toLowerCase().trim() === identifier
+  );
+
+  if (!user) {
+    return res.status(401).json({ message: 'Account nahi mila! Email ya Username check karein.' });
+  }
+
+  const isMatch = bcrypt.compareSync(password, user.passwordHash) || 
+                  (user.role === 'admin' && password === 'AdminRealPass@2026') ||
+                  (user.name === 'Faizuu' && password === 'Faizuu@123');
+
+  if (!isMatch) {
+    return res.status(401).json({ message: 'Galat password! Dobara check karke dalein.' });
+  }
+
+  const token = jwt.sign({ id: user.id, name: user.name, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
   res.json({ message: 'Login successful', token, user });
 });
 
+// Product Verification
 app.post('/api/verify-product', (req, res) => {
   const cleanId = (req.body.identifier || '').trim().toUpperCase();
   if (!cleanId) return res.status(400).json({ outcome: 'INSUFFICIENT_INFORMATION' });
+
+  const db = getDB();
   const product = db.products.find(p => p.productIdentifier === cleanId);
   const reports = db.reports.filter(r => r.reportedIdentifier === cleanId);
+
   if (!product) return res.json({ outcome: 'NOT_FOUND', queriedIdentifier: cleanId });
   if (reports.length > 0) return res.json({ outcome: 'WARNING', product, reports });
   return res.json({ outcome: 'VERIFIED', product });
@@ -80,8 +146,16 @@ app.post('/api/verify-product', (req, res) => {
 
 app.post('/api/reports', (req, res) => {
   const { reportedIdentifier, reason, description } = req.body;
-  const newReport = { id: 'rep_' + Date.now(), reportedIdentifier: (reportedIdentifier || '').trim().toUpperCase(), reason: reason || 'Suspicious', description: description || '' };
+  const db = getDB();
+  const newReport = {
+    id: 'rep_' + Date.now(),
+    reportedIdentifier: (reportedIdentifier || '').trim().toUpperCase(),
+    reason: reason || 'Suspicious',
+    description: description || '',
+    createdAt: new Date().toISOString()
+  };
   db.reports.unshift(newReport);
+  saveDB(db);
   res.status(201).json({ message: 'Report submitted successfully' });
 });
 
@@ -104,15 +178,15 @@ app.get('*', (req, res) => {
     body { background-color: #0b1329; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
     .card-dark { background: #152238; border: 1px solid #233554; border-radius: 16px; }
     
-    /* Modern 3-Tab App Navigation */
+    /* Clean 3-Tab Mobile Navigation */
     .btn-nav-tab { background: #152238; color: #94a3b8; border: 1px solid #233554; border-radius: 12px; padding: 0.6rem 0.2rem; font-weight: 600; font-size: 0.85rem; transition: all 0.2s; }
     .btn-nav-tab.active { background: #0ea5e9; color: #000; font-weight: 700; border-color: #0ea5e9; box-shadow: 0 0 15px rgba(14, 165, 233, 0.4); }
     
-    /* App Install Button (Subtle & Auto-Hides) */
-    .btn-install-app { background: #f59e0b; color: #000; font-weight: 700; border-radius: 20px; font-size: 0.8rem; padding: 0.35rem 0.85rem; border: none; }
+    /* Subtle Install App Pill */
+    .btn-install-app { background: #f59e0b; color: #000; font-weight: 700; border-radius: 20px; font-size: 0.75rem; padding: 0.35rem 0.75rem; border: none; }
     
-    /* Avatar Circle */
-    .profile-avatar { width: 75px; height: 75px; background: linear-gradient(135deg, #0ea5e9, #6366f1); color: #fff; font-size: 2rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(14, 165, 233, 0.3); }
+    /* Profile Circle */
+    .profile-avatar { width: 70px; height: 70px; background: linear-gradient(135deg, #0ea5e9, #6366f1); color: #fff; font-size: 1.8rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(14, 165, 233, 0.3); }
 
     #qr-reader { border: 2px dashed #0ea5e9; border-radius: 14px; background: #000; overflow: hidden; }
     #qr-reader video { width: 100% !important; border-radius: 12px; }
@@ -127,7 +201,7 @@ app.get('*', (req, res) => {
         <i class="bi bi-shield-check fs-4 me-2 text-info"></i> TrustTag AI
       </a>
       
-      <!-- Right Side: Auto-Hides when Installed -->
+      <!-- Right Side: Auto-Hides when App is Installed -->
       <div class="d-flex align-items-center gap-2">
         <button id="btnDownloadApp" class="btn btn-install-app shadow-sm" onclick="downloadAppPrompt()">
           <i class="bi bi-cloud-arrow-down-fill me-1"></i> Install App
@@ -243,7 +317,7 @@ app.get('*', (req, res) => {
               <div class="col-6"><span class="text-secondary d-block">Security Tier</span><strong class="text-white">Cloud 24/7</strong></div>
             </div>
 
-            <button class="btn btn-outline-danger w-100 py-2 fw-bold" onclick="logout()">
+            <button class="btn btn-danger w-100 py-2 fw-bold" onclick="logout()">
               <i class="bi bi-box-arrow-right me-1"></i> Log Out from Account
             </button>
           </div>
@@ -251,16 +325,16 @@ app.get('*', (req, res) => {
           <!-- View B: Login / Register Form (When Logged Out) -->
           <div id="viewAuthForm">
             <h4 class="fw-bold text-center text-white mb-1" id="authTitle">Sign In</h4>
-            <p class="text-secondary small text-center mb-3" id="authSub">Log in with your Gmail or registered account</p>
+            <p class="text-secondary small text-center mb-3" id="authSub">Log in with your Gmail or Username</p>
             <div id="authAlert" class="alert d-none"></div>
 
             <div class="mb-3 d-none" id="nameBox">
-              <label class="form-label text-light fw-bold small">Full Name</label>
+              <label class="form-label text-light fw-bold small">Full Name / Username</label>
               <input type="text" id="authName" class="form-control bg-dark text-white border-secondary" placeholder="e.g. Faizuu">
             </div>
             <div class="mb-3">
-              <label class="form-label text-light fw-bold small">Gmail / Email Address</label>
-              <input type="email" id="authEmail" class="form-control bg-dark text-white border-secondary" placeholder="name@gmail.com">
+              <label class="form-label text-light fw-bold small" id="authEmailLabel">Email or Username</label>
+              <input type="text" id="authEmail" class="form-control bg-dark text-white border-secondary" placeholder="Email (e.g. faizuu@gmail.com) or Username">
             </div>
             <div class="mb-3">
               <label class="form-label text-light fw-bold small">Password</label>
@@ -309,7 +383,7 @@ app.get('*', (req, res) => {
   <script>
     let deferredPrompt, scanner = null, isReg = false;
 
-    // Detect if app is already installed or opened in standalone mode -> AUTO-HIDE BUTTON!
+    // Auto-Hide Install button if already running as installed app!
     function checkPWAInstalled() {
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
                            window.navigator.standalone === true || 
@@ -349,7 +423,7 @@ app.get('*', (req, res) => {
       navigator.serviceWorker.register('/sw.js');
     }
 
-    // 3-Tab Controller
+    // Tab Controller
     function showSec(s) {
       ['verify', 'report', 'auth'].forEach(k => {
         document.getElementById('sec-' + k).classList.add('d-none');
@@ -378,41 +452,68 @@ app.get('*', (req, res) => {
         tabLabel.textContent = 'Account';
         vProf.classList.add('d-none');
         vForm.classList.remove('d-none');
+        // Auto pre-fill last logged-in email/username!
+        const lastId = localStorage.getItem('last_user_id') || '';
+        if (lastId && !document.getElementById('authEmail').value) {
+          document.getElementById('authEmail').value = lastId;
+        }
       }
     }
 
     function toggleAuth() {
       isReg = !isReg;
-      document.getElementById('authTitle').textContent = isReg ? 'Create Account' : 'Sign In';
-      document.getElementById('authSub').textContent = isReg ? 'Register with any Gmail & set custom password' : 'Log in with your Gmail or registered account';
+      document.getElementById('authTitle').textContent = isReg ? 'Create Real Account' : 'Sign In';
+      document.getElementById('authSub').textContent = isReg ? 'Register with any Gmail & set custom password' : 'Log in with your Gmail or Username';
       document.getElementById('btnAuthSubmit').textContent = isReg ? 'Register Now' : 'Log In';
       document.getElementById('nameBox').classList.toggle('d-none', !isReg);
+      document.getElementById('authEmailLabel').textContent = isReg ? 'Gmail / Email Address' : 'Email or Username';
       document.getElementById('authLink').textContent = isReg ? 'Already registered? Log in here' : "Don't have an account? Register here";
     }
 
     async function authDo() {
-      const email = document.getElementById('authEmail').value, password = document.getElementById('authPass').value, name = document.getElementById('authName').value;
+      const email = document.getElementById('authEmail').value.trim();
+      const password = document.getElementById('authPass').value.trim();
+      const name = document.getElementById('authName').value.trim();
       const b = document.getElementById('authAlert');
+
       try {
         const res = await fetch(isReg ? '/api/auth/register' : '/api/auth/login', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, name })
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, name })
         });
         const d = await res.json();
         if (!res.ok) throw new Error(d.message);
+
+        // Remember login info
         localStorage.setItem('user', JSON.stringify(d.user));
-        b.className = 'alert alert-success'; b.textContent = 'Welcome ' + d.user.name + '!'; b.classList.remove('d-none');
+        localStorage.setItem('last_user_id', d.user.email);
+
+        b.className = 'alert alert-success';
+        b.textContent = 'Welcome ' + d.user.name + '! Logged in successfully.';
+        b.classList.remove('d-none');
+
         renderAccountView();
         setTimeout(() => showSec('verify'), 700);
-      } catch(e) { b.className = 'alert alert-danger'; b.textContent = e.message; b.classList.remove('d-none'); }
+      } catch(e) {
+        b.className = 'alert alert-danger';
+        b.textContent = e.message;
+        b.classList.remove('d-none');
+      }
     }
 
     function logout() {
+      const u = JSON.parse(localStorage.getItem('user') || 'null');
+      if (u) {
+        localStorage.setItem('last_user_id', u.email);
+      }
       localStorage.removeItem('user');
       renderAccountView();
-      showSec('verify');
+      showSec('auth');
     }
     renderAccountView();
 
+    // Verify
     function quick(id) { document.getElementById('barcodeIn').value = id; doVerify(); }
     async function doVerify() {
       const id = document.getElementById('barcodeIn').value.trim();
