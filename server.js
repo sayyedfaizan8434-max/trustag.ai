@@ -1,564 +1,252 @@
 const express = require('express');
-const path = require('path');
 const cors = require('cors');
-const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const JWT_SECRET = 'trusttag_super_secure_jwt_secret_key_2026';
+const JWT_SECRET = 'trusttag_secret_2026';
 
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// 1. AUTO-GENERATE PUBLIC FOLDER & ALL HTML FILES IF MISSING
-const PUBLIC_DIR = path.join(__dirname, 'public');
-if (!fs.existsSync(PUBLIC_DIR)) {
-  fs.mkdirSync(PUBLIC_DIR, { recursive: true });
-}
+let db = {
+  users: [{ id: "admin", name: "Admin", email: "admin@trusttag.local", passwordHash: bcrypt.hashSync("AdminRealPass@2026", 10), role: "admin" }],
+  products: [
+    { productIdentifier: "8901058852441", productName: "Maggi 2-Minute Masala Instant Noodles (70g)", brand: "Nestle India", batchNumber: "MAG-2026-IN09", mrp: 14.00, source: "GS1 India" },
+    { productIdentifier: "8901117002016", productName: "Dolo-650 Paracetamol IP Tablets (15 Tab)", brand: "Micro Labs Ltd", batchNumber: "DOLO-650-B441", mrp: 34.00, source: "CDSCO Registry" },
+    { productIdentifier: "FAKE-COSMETIC-001", productName: "Luxury Glow Vitamin C Serum (30ml)", brand: "DermaBright", batchNumber: "FAKE-LOT-007", mrp: 899.00, source: "Consumer Division" }
+  ],
+  reports: [
+    { id: "rep_1", reportedIdentifier: "FAKE-COSMETIC-001", reason: "Poor packaging", description: "Misspells Dermatologist. Broken cap seal." }
+  ]
+};
 
-// Global Nav & Footer
-const navHtml = `
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow">
-  <div class="container">
-    <a class="navbar-brand fw-bold text-info" href="/"><i class="bi bi-shield-check me-2"></i>TrustTag AI</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu"><span class="navbar-toggler-icon"></span></button>
-    <div class="collapse navbar-collapse" id="navMenu">
-      <ul class="navbar-nav ms-auto align-items-center">
-        <li class="nav-item"><a class="nav-link" href="/">Home</a></li>
-        <li class="nav-item"><a class="nav-link" href="/verify.html">Verify Product</a></li>
-        <li class="nav-item"><a class="nav-link" href="/report.html">Report Fake</a></li>
-        <li class="nav-item ms-lg-3" id="navAuthSlot">
-          <a class="btn btn-sm btn-outline-info me-2" href="/login.html">Login</a>
-          <a class="btn btn-sm btn-info text-dark fw-bold" href="/register.html">Register</a>
-        </li>
-      </ul>
-    </div>
-  </div>
-</nav>`;
+app.post('/api/auth/register', (req, res) => {
+  let { name, email, password } = req.body;
+  email = (email || '').toLowerCase().trim();
+  password = (password || '').trim();
+  name = (name || 'Consumer').trim();
+  if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
+  if (db.users.some(u => u.email === email)) return res.status(400).json({ message: 'Email already registered' });
+  const newUser = { id: 'usr_' + Date.now(), name, email, passwordHash: bcrypt.hashSync(password, 10), role: 'user' };
+  db.users.push(newUser);
+  const token = jwt.sign({ id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role }, JWT_SECRET, { expiresIn: '15d' });
+  res.status(201).json({ message: 'Registration successful', token, user: newUser });
+});
 
-const footerHtml = `
-<footer class="bg-dark text-secondary text-center py-4 mt-auto border-top border-secondary">
-  <div class="container small">
-    &copy; 2026 TrustTag AI — Smart Product Authenticity System. 24/7 Live Cloud Edition.
-  </div>
-</footer>`;
+app.post('/api/auth/login', (req, res) => {
+  let { email, password } = req.body;
+  email = (email || '').toLowerCase().trim();
+  password = (password || '').trim();
+  const user = db.users.find(u => u.email === email);
+  if (!user) return res.status(401).json({ message: 'User not found' });
+  const isMatch = bcrypt.compareSync(password, user.passwordHash) || (user.role === 'admin' && password === 'AdminRealPass@2026');
+  if (!isMatch) return res.status(401).json({ message: 'Incorrect password' });
+  const token = jwt.sign({ id: user.id, name: user.name, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '15d' });
+  res.json({ message: 'Login successful', token, user });
+});
 
-// Pages Definition
-const pages = {
-  'index.html': `<!DOCTYPE html>
+app.post('/api/verify-product', (req, res) => {
+  const cleanId = (req.body.identifier || '').trim().toUpperCase();
+  if (!cleanId) return res.status(400).json({ outcome: 'INSUFFICIENT_INFORMATION' });
+  const product = db.products.find(p => p.productIdentifier === cleanId);
+  const reports = db.reports.filter(r => r.reportedIdentifier === cleanId);
+  if (!product) return res.json({ outcome: 'NOT_FOUND', queriedIdentifier: cleanId });
+  if (reports.length > 0) return res.json({ outcome: 'WARNING', product, reports });
+  return res.json({ outcome: 'VERIFIED', product });
+});
+
+app.post('/api/reports', (req, res) => {
+  const { reportedIdentifier, reason, description } = req.body;
+  const newReport = { id: 'rep_' + Date.now(), reportedIdentifier: (reportedIdentifier || '').trim().toUpperCase(), reason: reason || 'Suspicious', description: description || '' };
+  db.reports.unshift(newReport);
+  res.status(201).json({ message: 'Report submitted successfully' });
+});
+
+app.get('*', (req, res) => {
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"><title>TrustTag AI | Home</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <style>
-    body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
-    .hero { background: linear-gradient(135deg, #0a192f 0%, #1e293b 100%); padding: 4rem 0; border-bottom: 1px solid #334155; }
-    .card-dark { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
-  </style>
-</head>
-<body>
-  ${navHtml}
-  <div class="hero">
-    <div class="container">
-      <div class="row align-items-center g-4">
-        <div class="col-lg-7">
-          <span class="badge bg-info text-dark mb-2">Live Cloud Protection Active</span>
-          <h1 class="display-4 fw-bold mb-3">Verify Genuine Products. Stop Counterfeits.</h1>
-          <p class="lead text-secondary mb-4">Protect yourself from duplicate products. Scan barcodes or check registry records instantly.</p>
-          <div class="d-flex gap-3">
-            <a href="/verify.html" class="btn btn-info btn-lg text-dark fw-bold"><i class="bi bi-qr-code-scan me-2"></i>Verify Product</a>
-            <a href="/report.html" class="btn btn-outline-light btn-lg"><i class="bi bi-flag me-2"></i>Report Fake</a>
-          </div>
-        </div>
-        <div class="col-lg-5">
-          <div class="card card-dark p-4 shadow-lg">
-            <h5 class="fw-bold mb-2">Quick Test Barcodes</h5>
-            <p class="small text-secondary mb-3">Click any real product below to test:</p>
-            <div class="d-grid gap-2">
-              <a href="/verify.html?id=8901058852441" class="btn btn-outline-info text-start small">🍜 Maggi 2-Min Noodles (8901058852441)</a>
-              <a href="/verify.html?id=8901117002016" class="btn btn-outline-info text-start small">💊 Dolo-650 Tablets (8901117002016)</a>
-              <a href="/verify.html?id=FAKE-COSMETIC-001" class="btn btn-outline-danger text-start small">⚠️ Luxury Glow Serum (Fake Warning Demo)</a>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <main class="container my-5">
-    <h3 class="fw-bold mb-4 text-center">Verified Community Counterfeit Alerts</h3>
-    <div id="reportsFeed" class="row g-3">
-      <div class="col-12 text-center text-secondary py-3"><div class="spinner-border spinner-border-sm text-info me-2"></div>Loading live alerts...</div>
-    </div>
-  </main>
-  ${footerHtml}
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    fetch('/api/reports/recent-public').then(r => r.json()).then(d => {
-      const box = document.getElementById('reportsFeed');
-      if(!d.reports || d.reports.length === 0) { box.innerHTML = '<div class="col-12 text-center text-secondary">No active reports.</div>'; return; }
-      box.innerHTML = d.reports.map(r => \`
-        <div class="col-md-4">
-          <div class="card card-dark p-3 h-100 border-danger">
-            <span class="badge bg-danger mb-2">Counterfeit Alert</span>
-            <h6 class="fw-bold mb-1">\${r.reportedIdentifier}</h6>
-            <p class="text-warning small mb-1"><strong>Reason:</strong> \${r.reason}</p>
-            <p class="small text-secondary mb-0">\${r.description}</p>
-          </div>
-        </div>
-      \`).join('');
-    });
-    // Auth Check
-    const u = JSON.parse(localStorage.getItem('trusttag_user') || 'null');
-    if(u) {
-      document.getElementById('navAuthSlot').innerHTML = \`
-        <span class="badge bg-secondary me-2">👤 \${u.name}</span>
-        <button class="btn btn-sm btn-outline-danger" onclick="localStorage.clear(); location.reload();">Logout</button>
-      \`;
-    }
-  </script>
-</body>
-</html>`,
-
-  'verify.html': `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"><title>Verify Product | TrustTag AI</title>
+  <meta charset="UTF-8"><title>TrustTag AI - Product Authenticity Verification</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <script src="https://unpkg.com/html5-qrcode"></script>
   <style>
-    body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
-    .card-dark { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+    body { background-color: #0b1329; color: #f8fafc; font-family: system-ui, sans-serif; min-height: 100vh; }
+    .card-dark { background: #152238; border: 1px solid #233554; border-radius: 12px; }
   </style>
 </head>
 <body>
-  ${navHtml}
-  <main class="container my-5">
-    <div class="row justify-content-center">
-      <div class="col-lg-8">
-        <h2 class="fw-bold text-center mb-4"><i class="bi bi-patch-check text-info me-2"></i>Product Authenticity Check</h2>
-        <div class="card card-dark p-4 mb-4">
-          <form id="verifyForm" class="mb-3">
-            <label class="form-label fw-bold">Enter Product Barcode / ID</label>
-            <div class="input-group">
-              <input type="text" id="barcodeInput" class="form-control form-control-lg" placeholder="e.g. 8901058852441" required>
-              <button class="btn btn-info fw-bold px-4 text-dark" type="submit">Verify Now</button>
-            </div>
-          </form>
-          <div class="text-center py-2 border-top border-secondary mt-3">
-            <button class="btn btn-outline-info btn-sm me-2" id="startCamBtn"><i class="bi bi-camera me-1"></i>Start Camera Scanner</button>
-            <button class="btn btn-outline-danger btn-sm" id="stopCamBtn" disabled><i class="bi bi-stop-circle me-1"></i>Stop Camera</button>
-          </div>
-          <div id="camMsg" class="small text-secondary text-center my-2"></div>
-          <div id="qr-reader" style="max-width: 400px; margin: 0 auto;"></div>
-        </div>
-        <div id="resultBox"></div>
-      </div>
+  <nav class="navbar navbar-dark bg-black py-3 border-bottom border-secondary mb-4">
+    <div class="container d-flex justify-content-between align-items-center">
+      <a class="navbar-brand fw-bold text-info fs-4" href="/"><i class="bi bi-shield-check me-2"></i>TrustTag AI</a>
+      <div id="uBadge"></div>
     </div>
-  </main>
-  ${footerHtml}
-  <script>
-    let scanner = null;
-    const form = document.getElementById('verifyForm');
-    const input = document.getElementById('barcodeInput');
-    const resultBox = document.getElementById('resultBox');
-    const camMsg = document.getElementById('camMsg');
+  </nav>
 
-    const checkId = async (id) => {
-      resultBox.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-info"></div></div>';
-      const res = await fetch('/api/verify-product', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: id })
-      });
-      const d = await res.json();
-      if(d.outcome === 'VERIFIED_RECORD_FOUND') {
-        resultBox.innerHTML = \`
-          <div class="card card-dark p-4 border-success">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <span class="badge bg-success">VERIFIED IN REGISTRY</span>
-              <code>\${d.product.productIdentifier}</code>
-            </div>
-            <h3 class="fw-bold mb-1">\${d.product.productName}</h3>
-            <p class="text-secondary">Brand: <strong>\${d.product.brand}</strong> &bull; Manufacturer: \${d.product.manufacturer}</p>
-            <div class="row g-2 p-3 bg-dark rounded mb-3">
-              <div class="col-6 col-md-3"><small class="text-secondary d-block">Batch</small><strong>\${d.product.batchNumber}</strong></div>
-              <div class="col-6 col-md-3"><small class="text-secondary d-block">Official MRP</small><strong class="text-success">₹ \${d.product.mrp}</strong></div>
-              <div class="col-6 col-md-3"><small class="text-secondary d-block">Mfg Date</small><strong>\${d.product.manufacturingDate}</strong></div>
-              <div class="col-6 col-md-3"><small class="text-secondary d-block">Expiry</small><strong>\${d.product.expiryDate}</strong></div>
-            </div>
-            <small class="text-info"><i class="bi bi-database me-1"></i> Verified via: \${d.product.verificationSource}</small>
+  <div class="container">
+    <ul class="nav nav-pills justify-content-center mb-4 gap-2">
+      <li class="nav-item"><button class="btn btn-info text-dark fw-bold me-2" onclick="showSec('verify')"><i class="bi bi-qr-code-scan me-1"></i> Verify Product</button></li>
+      <li class="nav-item"><button class="btn btn-outline-light me-2" onclick="showSec('report')"><i class="bi bi-flag me-1"></i> Report Fake</button></li>
+      <li class="nav-item"><button class="btn btn-outline-info" onclick="showSec('auth')"><i class="bi bi-person me-1"></i> Account</button></li>
+    </ul>
+
+    <!-- VERIFY SECTION -->
+    <div id="sec-verify" class="row justify-content-center">
+      <div class="col-lg-7">
+        <div class="card card-dark p-4 shadow mb-4">
+          <h4 class="fw-bold mb-3 text-center">Verify Product Authenticity</h4>
+          <div class="input-group mb-3">
+            <input type="text" id="barcodeIn" class="form-control form-control-lg bg-dark text-white border-secondary" placeholder="e.g. 8901058852441">
+            <button class="btn btn-info fw-bold text-dark px-4" onclick="doVerify()"><i class="bi bi-search me-1"></i> Check</button>
           </div>
-        \`;
-      } else if(d.outcome === 'WARNING_APPROVED_REPORTS_EXIST') {
-        resultBox.innerHTML = \`
-          <div class="card card-dark p-4 border-warning">
-            <span class="badge bg-warning text-dark mb-2">WARNING: SUSPICIOUS COUNTERFEIT ALERT</span>
-            <h4 class="fw-bold">\${d.product.productName}</h4>
-            <div class="alert alert-warning my-2 small">
-              <strong>Caution:</strong> \${d.approvedReports.map(r => r.reason + ': ' + r.description).join('<br>')}
-            </div>
-            <a href="/report.html?id=\${encodeURIComponent(d.product.productIdentifier)}" class="btn btn-sm btn-outline-danger">Report More Evidence</a>
+          <div class="text-center mb-3">
+            <button class="btn btn-outline-info btn-sm" id="btnCamStart" onclick="startCam()"><i class="bi bi-camera me-1"></i> Camera Scanner</button>
+            <button class="btn btn-outline-danger btn-sm d-none" id="btnCamStop" onclick="stopCam()"><i class="bi bi-stop-circle me-1"></i> Stop Camera</button>
           </div>
-        \`;
-      } else {
-        resultBox.innerHTML = \`
-          <div class="card card-dark p-4 border-danger">
-            <span class="badge bg-danger mb-2">NOT FOUND IN REGISTRY</span>
-            <h5 class="fw-bold">No Authorized Record Found</h5>
-            <p class="small text-secondary">This barcode was not found in the verified database. If you suspect fraud, report it.</p>
-            <a href="/report.html?id=\${encodeURIComponent(id)}" class="btn btn-danger btn-sm">Report Suspicious Item</a>
-          </div>
-        \`;
-      }
-    };
-
-    form.onsubmit = (e) => { e.preventDefault(); checkId(input.value.trim()); };
-
-    const urlParams = new URLSearchParams(window.location.search);
-    if(urlParams.get('id')) { input.value = urlParams.get('id'); checkId(urlParams.get('id')); }
-
-    document.getElementById('startCamBtn').onclick = async () => {
-      try {
-        if(!scanner) scanner = new Html5Qrcode('qr-reader');
-        camMsg.textContent = 'Camera starting...';
-        await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 250 }, (decoded) => {
-          camMsg.textContent = 'Scanned: ' + decoded;
-          scanner.stop();
-          document.getElementById('startCamBtn').disabled = false;
-          document.getElementById('stopCamBtn').disabled = true;
-          input.value = decoded;
-          checkId(decoded);
-        }, () => {});
-        document.getElementById('startCamBtn').disabled = true;
-        document.getElementById('stopCamBtn').disabled = false;
-        camMsg.textContent = 'Hold Barcode or QR Code in front of camera.';
-      } catch(err) { camMsg.textContent = 'Camera error: ' + err.message; }
-    };
-
-    document.getElementById('stopCamBtn').onclick = async () => {
-      if(scanner) await scanner.stop();
-      document.getElementById('startCamBtn').disabled = false;
-      document.getElementById('stopCamBtn').disabled = true;
-      camMsg.textContent = 'Camera stopped.';
-    };
-  </script>
-</body>
-</html>`,
-
-  'login.html': `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"><title>Login | TrustTag AI</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <style>
-    body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
-    .card-dark { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
-  </style>
-</head>
-<body class="my-auto">
-  ${navHtml}
-  <main class="container my-5">
-    <div class="row justify-content-center">
-      <div class="col-md-5">
-        <div class="card card-dark p-4 shadow-lg">
-          <h3 class="fw-bold text-center mb-3">Sign In</h3>
-          <div id="loginMsg" class="alert d-none"></div>
-          <form id="loginForm">
-            <div class="mb-3">
-              <label class="form-label">Gmail / Email Address</label>
-              <input type="email" class="form-control bg-dark text-light border-secondary" id="loginEmail" placeholder="name@gmail.com" required>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Password</label>
-              <input type="password" class="form-control bg-dark text-light border-secondary" id="loginPass" placeholder="••••••••" required>
-            </div>
-            <button class="btn btn-info text-dark fw-bold w-100 py-2" type="submit">Log In</button>
-          </form>
-          <div class="text-center mt-3 small text-secondary">
-            Don't have an account? <a href="/register.html" class="text-info fw-bold">Register</a>
-          </div>
-          <div class="p-2 bg-dark rounded small text-secondary mt-3 border border-secondary text-center">
-            <strong>Admin Login:</strong><br><code>admin@trusttag.local</code> / <code>AdminRealPass@2026</code>
+          <div id="qr-reader" style="max-width: 350px; margin: 0 auto;"></div>
+          <div class="mt-3 text-center small text-secondary">
+            Quick Tests:
+            <button class="badge bg-secondary border-0 me-1" onclick="quick('8901058852441')">Maggi (8901058852441)</button>
+            <button class="badge bg-secondary border-0 me-1" onclick="quick('8901117002016')">Dolo-650 (8901117002016)</button>
+            <button class="badge bg-danger border-0" onclick="quick('FAKE-COSMETIC-001')">Fake Serum (Warning)</button>
           </div>
         </div>
+        <div id="verifyOut"></div>
       </div>
     </div>
-  </main>
-  ${footerHtml}
-  <script>
-    document.getElementById('loginForm').onsubmit = async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById('loginMsg');
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: document.getElementById('loginEmail').value, password: document.getElementById('loginPass').value })
-        });
-        const d = await res.json();
-        if(!res.ok) throw new Error(d.message);
-        localStorage.setItem('trusttag_token', d.token);
-        localStorage.setItem('trusttag_user', JSON.stringify(d.user));
-        msg.className = 'alert alert-success'; msg.textContent = 'Login successful! Redirecting...'; msg.classList.remove('d-none');
-        setTimeout(() => { location.href = '/'; }, 800);
-      } catch(err) {
-        msg.className = 'alert alert-danger'; msg.textContent = err.message; msg.classList.remove('d-none');
-      }
-    };
-  </script>
-</body>
-</html>`,
 
-  'register.html': `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"><title>Register | TrustTag AI</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <style>
-    body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
-    .card-dark { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
-  </style>
-</head>
-<body class="my-auto">
-  ${navHtml}
-  <main class="container my-5">
-    <div class="row justify-content-center">
-      <div class="col-md-5">
-        <div class="card card-dark p-4 shadow-lg">
-          <h3 class="fw-bold text-center mb-1">Create Account</h3>
-          <p class="small text-secondary text-center mb-3">Register with any Gmail & your custom password</p>
-          <div id="regMsg" class="alert d-none"></div>
-          <form id="regForm">
-            <div class="mb-2">
-              <label class="form-label">Your Name</label>
-              <input type="text" class="form-control bg-dark text-light border-secondary" id="regName" placeholder="e.g. Rahul Sharma" required>
-            </div>
-            <div class="mb-2">
-              <label class="form-label">Gmail / Email Address</label>
-              <input type="email" class="form-control bg-dark text-light border-secondary" id="regEmail" placeholder="e.g. rahul@gmail.com" required>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Set Your Custom Password</label>
-              <input type="password" class="form-control bg-dark text-light border-secondary" id="regPass" placeholder="••••••••" required minlength="4">
-            </div>
-            <button class="btn btn-info text-dark fw-bold w-100 py-2" type="submit">Create Real Account</button>
-          </form>
-          <div class="text-center mt-3 small text-secondary">
-            Already have an account? <a href="/login.html" class="text-info fw-bold">Log in</a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </main>
-  ${footerHtml}
-  <script>
-    document.getElementById('regForm').onsubmit = async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById('regMsg');
-      try {
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: document.getElementById('regName').value, email: document.getElementById('regEmail').value, password: document.getElementById('regPass').value })
-        });
-        const d = await res.json();
-        if(!res.ok) throw new Error(d.message);
-        localStorage.setItem('trusttag_token', d.token);
-        localStorage.setItem('trusttag_user', JSON.stringify(d.user));
-        msg.className = 'alert alert-success'; msg.textContent = 'Account created! Redirecting...'; msg.classList.remove('d-none');
-        setTimeout(() => { location.href = '/'; }, 800);
-      } catch(err) {
-        msg.className = 'alert alert-danger'; msg.textContent = err.message; msg.classList.remove('d-none');
-      }
-    };
-  </script>
-</body>
-</html>`,
-
-  'report.html': `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"><title>Report Fake | TrustTag AI</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <style>
-    body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
-    .card-dark { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
-  </style>
-</head>
-<body>
-  ${navHtml}
-  <main class="container my-5">
-    <div class="row justify-content-center">
+    <!-- REPORT SECTION -->
+    <div id="sec-report" class="row justify-content-center d-none">
       <div class="col-lg-6">
-        <div class="card card-dark p-4 shadow-lg">
-          <h3 class="fw-bold text-center mb-3"><i class="bi bi-flag-fill text-danger me-2"></i>Report Suspicious Product</h3>
-          <div id="repMsg" class="alert d-none"></div>
-          <form id="repForm">
-            <div class="mb-3">
-              <label class="form-label">Product Barcode / ID *</label>
-              <input type="text" class="form-control bg-dark text-light border-secondary" id="repId" placeholder="e.g. 8901058852441" required>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Reason *</label>
-              <select class="form-select bg-dark text-light border-secondary" id="repReason" required>
-                <option value="Poor packaging or spelling errors">Poor packaging or spelling errors</option>
-                <option value="Broken safety seal">Broken safety seal</option>
-                <option value="Suspiciously low price">Suspiciously low price</option>
-                <option value="Altered expiry date">Altered expiry date</option>
-              </select>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Description *</label>
-              <textarea class="form-control bg-dark text-light border-secondary" id="repDesc" rows="3" required placeholder="Describe what looks fake..."></textarea>
-            </div>
-            <button class="btn btn-danger w-100 py-2 fw-bold" type="submit">Submit Fake Report</button>
-          </form>
+        <div class="card card-dark p-4 shadow">
+          <h4 class="fw-bold text-center mb-3 text-danger"><i class="bi bi-flag-fill me-2"></i>Report Fake Product</h4>
+          <div id="repAlert" class="alert d-none"></div>
+          <div class="mb-3">
+            <label class="form-label">Product ID / Barcode *</label>
+            <input type="text" id="repId" class="form-control bg-dark text-white border-secondary" placeholder="e.g. 8901058852441">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Reason *</label>
+            <select id="repReason" class="form-select bg-dark text-white border-secondary">
+              <option value="Poor packaging or spelling errors">Poor packaging or spelling errors</option>
+              <option value="Broken safety seal">Broken safety seal</option>
+              <option value="Suspiciously low price">Suspiciously low price</option>
+              <option value="Altered expiry date">Altered expiry date</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Description *</label>
+            <textarea id="repDesc" class="form-control bg-dark text-white border-secondary" rows="3" placeholder="Describe what looks fake..."></textarea>
+          </div>
+          <button class="btn btn-danger w-100 py-2 fw-bold" onclick="submitRep()">Submit Report</button>
         </div>
       </div>
     </div>
-  </main>
-  ${footerHtml}
+
+    <!-- AUTH SECTION -->
+    <div id="sec-auth" class="row justify-content-center d-none">
+      <div class="col-md-5">
+        <div class="card card-dark p-4 shadow">
+          <h4 class="fw-bold text-center mb-3" id="authTitle">Sign In</h4>
+          <div id="authAlert" class="alert d-none"></div>
+          <div class="mb-3 d-none" id="nameBox">
+            <label class="form-label">Full Name</label>
+            <input type="text" id="authName" class="form-control bg-dark text-white border-secondary" placeholder="Your Name">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Gmail / Email</label>
+            <input type="email" id="authEmail" class="form-control bg-dark text-white border-secondary" placeholder="name@gmail.com">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input type="password" id="authPass" class="form-control bg-dark text-white border-secondary" placeholder="••••••••">
+          </div>
+          <button class="btn btn-info text-dark fw-bold w-100 py-2" id="btnAuthSubmit" onclick="authDo()">Log In</button>
+          <div class="text-center mt-3 small text-secondary">
+            <a href="javascript:void(0)" class="text-info fw-bold" onclick="toggleAuth()" id="authLink">Need an account? Register here</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
-    const idParam = new URLSearchParams(window.location.search).get('id');
-    if(idParam) document.getElementById('repId').value = idParam;
-    document.getElementById('repForm').onsubmit = async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById('repMsg');
-      const res = await fetch('/api/reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          reportedIdentifier: document.getElementById('repId').value.trim(),
-          reason: document.getElementById('repReason').value,
-          description: document.getElementById('repDesc').value.trim()
-        })
-      });
-      msg.className = 'alert alert-success'; msg.textContent = 'Report submitted successfully! Queued for review.'; msg.classList.remove('d-none');
-      e.target.reset();
-    };
+    let scanner = null, isReg = false;
+    function showSec(s) {
+      ['verify', 'report', 'auth'].forEach(k => document.getElementById('sec-' + k).classList.add('d-none'));
+      document.getElementById('sec-' + s).classList.remove('d-none');
+    }
+    function toggleAuth() {
+      isReg = !isReg;
+      document.getElementById('authTitle').textContent = isReg ? 'Create Account' : 'Sign In';
+      document.getElementById('btnAuthSubmit').textContent = isReg ? 'Register Now' : 'Log In';
+      document.getElementById('nameBox').classList.toggle('d-none', !isReg);
+      document.getElementById('authLink').textContent = isReg ? 'Already registered? Log in' : 'Need an account? Register here';
+    }
+    async function authDo() {
+      const email = document.getElementById('authEmail').value, password = document.getElementById('authPass').value, name = document.getElementById('authName').value;
+      const b = document.getElementById('authAlert');
+      try {
+        const res = await fetch(isReg ? '/api/auth/register' : '/api/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, name })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.message);
+        localStorage.setItem('user', JSON.stringify(d.user));
+        b.className = 'alert alert-success'; b.textContent = 'Welcome ' + d.user.name; b.classList.remove('d-none');
+        loadUser(); setTimeout(() => showSec('verify'), 800);
+      } catch(e) { b.className = 'alert alert-danger'; b.textContent = e.message; b.classList.remove('d-none'); }
+    }
+    function loadUser() {
+      const u = JSON.parse(localStorage.getItem('user') || 'null');
+      document.getElementById('uBadge').innerHTML = u ? '<span class="badge bg-secondary me-2">👤 ' + u.name + '</span><button class="btn btn-sm btn-outline-danger" onclick="localStorage.clear();loadUser();">Logout</button>' : '';
+    }
+    loadUser();
+
+    function quick(id) { document.getElementById('barcodeIn').value = id; doVerify(); }
+    async function doVerify() {
+      const id = document.getElementById('barcodeIn').value.trim();
+      const out = document.getElementById('verifyOut');
+      if (!id) return;
+      out.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-info"></div></div>';
+      const res = await fetch('/api/verify-product', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: id }) });
+      const d = await res.json();
+      if (d.outcome === 'VERIFIED') {
+        out.innerHTML = '<div class="card card-dark p-4 border-success"><div class="d-flex justify-content-between mb-2"><span class="badge bg-success">AUTHENTIC RECORD FOUND</span><code>' + d.product.productIdentifier + '</code></div><h3 class="fw-bold">' + d.product.productName + '</h3><p class="text-secondary">Brand: <strong>' + d.product.brand + '</strong> | Batch: ' + d.product.batchNumber + ' | MRP: ₹' + d.product.mrp + '</p><small class="text-info"><i class="bi bi-database me-1"></i> Source: ' + d.product.source + '</small></div>';
+      } else if (d.outcome === 'WARNING') {
+        out.innerHTML = '<div class="card card-dark p-4 border-warning"><span class="badge bg-warning text-dark mb-2">WARNING: SUSPICIOUS REPORT REGISTERED</span><h3 class="fw-bold">' + d.product.productName + '</h3><div class="alert alert-warning small my-2"><strong>Incident:</strong> ' + d.reports.map(r => r.reason + ' - ' + r.description).join('<br>') + '</div></div>';
+      } else {
+        out.innerHTML = '<div class="card card-dark p-4 border-danger"><span class="badge bg-danger mb-2">RECORD NOT FOUND</span><h5 class="fw-bold">No match found in authorized database</h5><p class="text-secondary small">This product ID was not found in registered databases.</p></div>';
+      }
+    }
+    function startCam() {
+      if (!scanner) scanner = new Html5Qrcode("qr-reader");
+      document.getElementById('btnCamStart').classList.add('d-none');
+      document.getElementById('btnCamStop').classList.remove('d-none');
+      scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (txt) => {
+        document.getElementById('barcodeIn').value = txt; stopCam(); doVerify();
+      }, () => {});
+    }
+    function stopCam() {
+      if (scanner) scanner.stop();
+      document.getElementById('btnCamStart').classList.remove('d-none');
+      document.getElementById('btnCamStop').classList.add('d-none');
+    }
+    async function submitRep() {
+      const id = document.getElementById('repId').value.trim(), reason = document.getElementById('repReason').value, desc = document.getElementById('repDesc').value.trim();
+      const a = document.getElementById('repAlert');
+      if (!id || !desc) { a.className = 'alert alert-danger'; a.textContent = 'Please fill all required fields'; a.classList.remove('d-none'); return; }
+      await fetch('/api/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportedIdentifier: id, reason, description: desc }) });
+      a.className = 'alert alert-success'; a.textContent = 'Report submitted successfully!'; a.classList.remove('d-none');
+    }
   </script>
 </body>
-</html>`
-};
-
-// Write all HTML files into public directory automatically!
-Object.keys(pages).forEach(filename => {
-  const filePath = path.join(PUBLIC_DIR, filename);
-  fs.writeFileSync(filePath, pages[filename], 'utf8');
+</html>`);
 });
-console.log('✅ All Frontend HTML Files Auto-Generated in:', PUBLIC_DIR);
 
-app.use(express.static(PUBLIC_DIR));
-
-// Direct Route Handlers (ENOENT Proof: It will NEVER throw Cannot GET /)
-app.get('/', (req, res) => res.send(pages['index.html']));
-app.get('/verify.html', (req, res) => res.send(pages['verify.html']));
-app.get('/login.html', (req, res) => res.send(pages['login.html']));
-app.get('/register.html', (req, res) => res.send(pages['register.html']));
-app.get('/report.html', (req, res) => res.send(pages['report.html']));
-
-// 2. IN-MEMORY / PERSISTENT DATABASE ENGINE
-let db = {
-  users: [
-    {
-      id: "usr_admin",
-      name: "System Admin",
-      email: "admin@trusttag.local",
-      passwordHash: bcrypt.hashSync("AdminRealPass@2026", 10),
-      role: "admin"
-    }
-  ],
-  products: [
-    {
-      productIdentifier: "8901058852441",
-      productName: "Maggi 2-Minute Masala Instant Noodles (70g)",
-      brand: "Nestlé India",
-      category: "Packaged Food",
-      manufacturer: "Nestlé India Limited",
-      batchNumber: "MAG-2026-IN09",
-      manufacturingDate: "2026-01-10",
-      expiryDate: "2026-10-10",
-      mrp: 14.00,
-      verificationSource: "GS1 India Master Registry",
-      verificationStatus: "Active"
-    },
-    {
-      productIdentifier: "8901117002016",
-      productName: "Dolo-650 Paracetamol IP Tablets (Strip of 15)",
-      brand: "Micro Labs Ltd",
-      category: "Pharmaceuticals",
-      manufacturer: "Micro Labs Limited",
-      batchNumber: "DOLO-650-B441",
-      manufacturingDate: "2025-08-15",
-      expiryDate: "2028-07-31",
-      mrp: 34.00,
-      verificationSource: "CDSCO Central Drug Registry",
-      verificationStatus: "Active"
-    },
-    {
-      productIdentifier: "FAKE-COSMETIC-001",
-      productName: "Luxury Glow Vitamin C Face Serum (30ml)",
-      brand: "DermaBright Organics",
-      category: "Cosmetics",
-      manufacturer: "Substandard Bottler",
-      batchNumber: "FAKE-LOT-007",
-      manufacturingDate: "2024-05-10",
-      expiryDate: "2026-05-09",
-      mrp: 899.00,
-      verificationSource: "Consumer Division",
-      verificationStatus: "Active"
-    }
-  ],
-  reports: [
-    {
-      id: "rep_1",
-      reportedIdentifier: "FAKE-COSMETIC-001",
-      productName: "Luxury Glow Vitamin C Face Serum (30ml)",
-      brand: "DermaBright Organics",
-      reason: "Poor packaging or spelling errors",
-      location: "Chandni Chowk Market, Delhi",
-      description: "Packaging misspells 'Dermatologist' as 'Dermatlogist'. Cap seal broken.",
-      status: "approved",
-      createdAt: new Date().toISOString()
-    }
-  ]
-};
-
-// ================= APIS =================
-
-// Register
-app.post('/api/auth/register', (req, res) => {
-  let { name, email, password } = req.body;
-  name = (name || 'Consumer').trim();
-  email = (email || '').toLowerCase().trim();
-  password = (password || '').trim();
-
-  if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
-  if (db.users.some(u => u.email === email)) {
-    return res.status(400).json({ message: 'Email already registered. Please login.' });
-  }
-
-  const newUser = {
-    id: 'usr_' + Date.now(),
-    name,
-    email,
-    passwordHash: bcrypt.hashSync(password, 10),
-    role: 'user'
-  };
-  db.users.push(newUser);
-
-  const token = jwt.sign({ id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role }, JWT_SECRET, { expiresIn: '15d' });
-  res.status(201).json({ message: 'Registration s
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('TrustTag AI Server running on port', PORT);
+});
